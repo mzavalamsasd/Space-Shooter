@@ -9,8 +9,8 @@ const HEIGHT = canvas.height;
 const keys = new Set();
 const ship = { x: WIDTH / 2, y: HEIGHT - 76, width: 38, height: 36, speed: 5.4, cooldown: 0, invulnerable: 0 };
 const allies = ["VEGA", "KITE", "COMET", "ECHO"].map((callsign, index) => {
-  const offset = [-92, -46, 46, 92][index];
-  return { callsign, offset, x: WIDTH / 2 + offset, y: HEIGHT - 52, cooldown: 0.35 + index * 0.12 };
+  const x = WIDTH / 2 + [-92, -46, 46, 92][index];
+  return { callsign, x, y: HEIGHT - 52, targetX: x, targetY: HEIGHT - 52, roamTimer: index * 0.2, cooldown: 0.35 + index * 0.12 };
 });
 const stars = Array.from({ length: 110 }, () => ({ x: Math.random() * WIDTH, y: Math.random() * HEIGHT, size: Math.random() * 1.8 + 0.4, speed: Math.random() * 1.3 + 0.35 }));
 const hulls = [
@@ -49,6 +49,9 @@ let missiles = [];
 let enemyShots = [];
 let enemies = [];
 let particles = [];
+let transport = null;
+let lastEscortWave = 0;
+let escortQueued = false;
 let score = 0;
 let lives = 3;
 let wave = 1;
@@ -94,6 +97,10 @@ const weaponSelector = document.getElementById("weapon-selector");
 const creditsDisplay = document.getElementById("credits");
 const soundSetting = document.getElementById("sound-setting");
 const difficultySetting = document.getElementById("difficulty-setting");
+const escortStatus = document.getElementById("escort-status");
+const escortLabel = document.getElementById("escort-label");
+const escortHull = document.getElementById("escort-hull");
+const escortIntegrity = document.getElementById("escort-integrity");
 
 function setState(nextState) {
   state = nextState;
@@ -122,10 +129,18 @@ function startGame() {
   enemyShots = [];
   enemies = [];
   particles = [];
+  transport = null;
+  lastEscortWave = 0;
+  escortQueued = false;
+  escortStatus.hidden = true;
   killFeed.replaceChildren();
   ship.x = WIDTH / 2;
   for (const ally of allies) {
-    ally.x = ship.x + ally.offset;
+    ally.x = ship.x + (Math.random() - 0.5) * 90;
+    ally.y = ship.y - 35 + (Math.random() - 0.5) * 55;
+    ally.targetX = ally.x;
+    ally.targetY = ally.y;
+    ally.roamTimer = Math.random();
     ally.cooldown = 0.35;
   }
   ship.cooldown = 0;
@@ -225,6 +240,43 @@ function spawnEnemy() {
   });
 }
 
+function startEscortMission() {
+  transport = { x: 48, y: HEIGHT * 0.63, width: 66, height: 34, hp: 3, maxHp: 3, speed: 68 };
+  escortLabel.textContent = "ESCORT TRANSPORT";
+  escortStatus.classList.remove("escort-success", "escort-danger");
+  escortStatus.hidden = false;
+  updateEscortHud();
+}
+
+function updateEscortHud() {
+  if (!transport) return;
+  escortHull.style.width = `${transport.hp / transport.maxHp * 100}%`;
+  escortIntegrity.textContent = `HULL ${transport.hp} / ${transport.maxHp}`;
+}
+
+function resolveEscort(success) {
+  transport = null;
+  escortLabel.textContent = success ? "TRANSPORT SAFE · +150" : "TRANSPORT LOST";
+  escortStatus.classList.toggle("escort-success", success);
+  escortStatus.classList.toggle("escort-danger", !success);
+  escortIntegrity.textContent = success ? "MISSION COMPLETE" : "MISSION FAILED";
+  escortHull.style.width = success ? "100%" : "0%";
+  if (success) {
+    score += 150;
+    credits += 12;
+    writeStore("starfall-credits", String(credits));
+  } else {
+    loseLife();
+  }
+  window.setTimeout(() => {
+    if (!transport) escortStatus.hidden = true;
+    if (!transport && escortQueued && state === "playing") {
+      escortQueued = false;
+      startEscortMission();
+    }
+  }, 2200);
+}
+
 function fire() {
   if (ship.cooldown > 0) return;
   if (currentWeapon === "missile") {
@@ -306,9 +358,15 @@ function update(delta) {
   ship.cooldown = Math.max(0, ship.cooldown - delta);
   ship.invulnerable = Math.max(0, ship.invulnerable - delta);
   for (const ally of allies) {
-    const targetX = Math.max(20, Math.min(WIDTH - 20, ship.x + ally.offset));
-    ally.x += (targetX - ally.x) * Math.min(1, delta * 8);
-    ally.y = ship.y + 22;
+    ally.roamTimer -= delta;
+    if (ally.roamTimer <= 0 || Math.hypot(ally.targetX - ally.x, ally.targetY - ally.y) < 12) {
+      ally.targetX = 24 + Math.random() * (WIDTH - 48);
+      ally.targetY = 90 + Math.random() * (HEIGHT - 175);
+      ally.roamTimer = 0.8 + Math.random() * 1.8;
+    }
+    const travel = Math.min(1, delta * 1.7);
+    ally.x += (ally.targetX - ally.x) * travel;
+    ally.y += (ally.targetY - ally.y) * travel;
     ally.cooldown -= delta;
   }
 
@@ -319,7 +377,10 @@ function update(delta) {
     spawnTimer = Math.max(0.32, 1.05 - wave * 0.035) * (0.7 + Math.random() * 0.6) / threat;
   }
 
-  for (const bullet of bullets) bullet.y -= bullet.speed * delta * 60;
+  for (const bullet of bullets) {
+    bullet.x += (bullet.vx || 0) * delta * 60;
+    bullet.y -= bullet.speed * delta * 60;
+  }
   for (const bullet of allyBullets) bullet.y -= bullet.speed * delta * 60;
   for (const missile of missiles) {
     if (missile.target && !missile.target.active && enemies.includes(missile.target)) {
@@ -352,6 +413,11 @@ function update(delta) {
     }
   }
 
+  if (transport) {
+    transport.x += transport.speed * delta;
+    if (transport.x > WIDTH - transport.width / 2) resolveEscort(true);
+  }
+
   for (const ally of allies) {
     if (ally.cooldown > 0 || enemies.length === 0) continue;
     const target = enemies.reduce((closest, enemy) => {
@@ -365,7 +431,9 @@ function update(delta) {
 
   for (const enemy of enemies) {
     for (const bullet of [...bullets, ...allyBullets, ...missiles]) {
-      if (bullet.active || !overlaps(bullet.x - 2, bullet.y - 8, 4, 16, enemy.x - enemy.size / 2, enemy.y - enemy.size / 2, enemy.size, enemy.size)) continue;
+      const bulletWidth = bullet.width || 4;
+      const bulletHeight = bullet.height || 16;
+      if (bullet.active || !overlaps(bullet.x - bulletWidth / 2, bullet.y - bulletHeight / 2, bulletWidth, bulletHeight, enemy.x - enemy.size / 2, enemy.y - enemy.size / 2, enemy.size, enemy.size)) continue;
       bullet.active = true;
       enemy.hp -= bullet.damage || 1;
       if (enemy.hp <= 0) {
@@ -393,6 +461,20 @@ function update(delta) {
     return true;
   });
 
+  if (transport) {
+    for (const shot of enemyShots) {
+      if (shot.active || !overlaps(shot.x - 4, shot.y - 6, 8, 12, transport.x - transport.width / 2, transport.y - transport.height / 2, transport.width, transport.height)) continue;
+      shot.active = true;
+      transport.hp -= 1;
+      burst(shot.x, shot.y, "#ff4055", 5);
+      if (transport.hp <= 0) {
+        resolveEscort(false);
+        break;
+      }
+      updateEscortHud();
+    }
+  }
+
   if (ship.invulnerable <= 0) {
     for (const enemy of enemies) {
       if (!overlaps(ship.x - 13, ship.y - 15, 26, 30, enemy.x - enemy.size / 2, enemy.y - enemy.size / 2, enemy.size, enemy.size)) continue;
@@ -418,7 +500,15 @@ function update(delta) {
   }
   particles = particles.filter((particle) => particle.life > 0);
 
-  wave = 1 + Math.floor(score / 180);
+  const nextWave = 1 + Math.floor(score / 180);
+  if (nextWave > wave) {
+    wave = nextWave;
+    if (wave > lastEscortWave && wave % 3 === 0) {
+      lastEscortWave = wave;
+      if (transport) escortQueued = true;
+      else startEscortMission();
+    }
+  }
   updateHud();
 }
 
@@ -459,6 +549,10 @@ function drawShip() {
   ctx.fill();
   ctx.fillStyle = "#ff9b58";
   ctx.fillRect(-3, 14, 6, 7 + Math.random() * 5);
+  ctx.fillStyle = "#d9ecff";
+  ctx.font = "9px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("ACE", 0, 30);
   ctx.restore();
 }
 
@@ -497,16 +591,33 @@ function draw() {
   ctx.lineTo(WIDTH, HEIGHT - 36);
   ctx.stroke();
   for (const bullet of bullets) {
-    ctx.fillStyle = "#8fffee";
-    ctx.shadowColor = "#65e5d3";
-    ctx.shadowBlur = 12;
-    ctx.fillRect(bullet.x - 2, bullet.y - 8, 4, 16);
+    const plasma = bullet.kind === "plasma";
+    ctx.fillStyle = plasma ? "#ffb15c" : "#8fffee";
+    ctx.shadowColor = plasma ? "#ff713d" : "#65e5d3";
+    ctx.shadowBlur = plasma ? 16 : 12;
+    ctx.fillRect(bullet.x - (bullet.width || 4) / 2, bullet.y - (bullet.height || 16) / 2, bullet.width || 4, bullet.height || 16);
   }
   for (const bullet of allyBullets) {
     ctx.fillStyle = "#75b8ff";
     ctx.shadowColor = "#4e9bff";
     ctx.shadowBlur = 8;
     ctx.fillRect(bullet.x - 1.5, bullet.y - 7, 3, 14);
+  }
+  for (const missile of missiles) {
+    ctx.save();
+    ctx.translate(missile.x, missile.y);
+    ctx.rotate(Math.atan2(missile.vy, missile.vx) + Math.PI / 2);
+    ctx.fillStyle = "#ffb15c";
+    ctx.shadowColor = "#ff713d";
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.moveTo(0, -9);
+    ctx.lineTo(5, 5);
+    ctx.lineTo(0, 3);
+    ctx.lineTo(-5, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
   ctx.shadowBlur = 0;
   for (const shot of enemyShots) {
@@ -516,6 +627,7 @@ function draw() {
     ctx.fill();
   }
   for (const enemy of enemies) drawEnemy(enemy);
+  if (transport) drawTransport();
   for (const ally of allies) drawWingmate(ally);
   for (const particle of particles) {
     ctx.globalAlpha = Math.min(1, particle.life * 2);
@@ -540,6 +652,30 @@ function drawWingmate(ally) {
   ctx.fill();
   ctx.fillStyle = "#d9ecff";
   ctx.fillRect(-2, -4, 4, 6);
+  ctx.font = "8px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText(ally.callsign, 0, 19);
+  ctx.restore();
+}
+
+function drawTransport() {
+  ctx.save();
+  ctx.translate(transport.x, transport.y);
+  ctx.fillStyle = "#3177c9";
+  ctx.fillRect(-transport.width / 2, -transport.height / 2, transport.width, transport.height);
+  ctx.fillStyle = "#8fc7ff";
+  ctx.fillRect(-transport.width / 2 + 9, -transport.height / 2 - 5, transport.width - 18, 7);
+  ctx.fillStyle = "#e4f2ff";
+  ctx.fillRect(-transport.width / 2 + 13, -4, 10, 8);
+  ctx.fillRect(-5, -4, 10, 8);
+  ctx.fillRect(transport.width / 2 - 23, -4, 10, 8);
+  ctx.fillStyle = "#ff9b58";
+  ctx.fillRect(-transport.width / 2 - 4, -7, 4, 14);
+  ctx.fillRect(transport.width / 2, -7, 4, 14);
+  ctx.fillStyle = "#d9ecff";
+  ctx.font = "9px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("CIVILIAN TRANSPORT", 0, transport.height / 2 + 13);
   ctx.restore();
 }
 
@@ -578,14 +714,21 @@ function drawRadar() {
     radarCtx.arc(x, y, enemy.tough ? 3 : 2, 0, Math.PI * 2);
     radarCtx.fill();
   }
+  if (transport) {
+    const x = padding + transport.x / WIDTH * plotWidth;
+    const y = padding + transport.y / HEIGHT * plotHeight;
+    radarCtx.fillStyle = "#8fc7ff";
+    radarCtx.fillRect(x - 3, y - 2, 6, 4);
+  }
   radarCtx.fillStyle = "#4e9bff";
   for (const ally of allies) {
     const x = padding + ally.x / WIDTH * plotWidth;
-    radarCtx.fillRect(x - 1.5, height - padding - 2, 3, 3);
+    const y = padding + ally.y / HEIGHT * plotHeight;
+    radarCtx.fillRect(x - 1.5, y - 1.5, 3, 3);
   }
   radarCtx.fillStyle = "#d9ecff";
   radarCtx.beginPath();
-  radarCtx.arc(padding + ship.x / WIDTH * plotWidth, height - padding - 2, 2.5, 0, Math.PI * 2);
+  radarCtx.arc(padding + ship.x / WIDTH * plotWidth, padding + ship.y / HEIGHT * plotHeight, 2.5, 0, Math.PI * 2);
   radarCtx.fill();
   radarCount.textContent = String(enemies.length).padStart(2, "0");
 }
@@ -605,6 +748,10 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   const key = event.key.toLowerCase();
+  if (key === "1") selectWeapon("laser");
+  if (key === "2") selectWeapon("missile");
+  if (key === "3") selectWeapon("spread");
+  if (key === "4") selectWeapon("plasma");
   if (["arrowleft", "arrowright", " "].includes(key)) event.preventDefault();
   keys.add(key);
 });
@@ -619,6 +766,14 @@ overlay.addEventListener("click", (event) => {
 hullList.addEventListener("click", (event) => {
   const button = event.target.closest("[data-hull]");
   if (button) purchaseOrEquip(button.dataset.hull);
+});
+weaponList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-buy-weapon]");
+  if (button) purchaseOrSelectWeapon(button.dataset.buyWeapon);
+});
+weaponSelector.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-weapon]");
+  if (button) selectWeapon(button.dataset.weapon);
 });
 
 soundSetting.checked = soundEnabled;
@@ -645,5 +800,6 @@ document.querySelectorAll("[data-control]").forEach((button) => {
 });
 
 updateHud();
+renderWeaponSelector();
 setState("menu");
 draw();
