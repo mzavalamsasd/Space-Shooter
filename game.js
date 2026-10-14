@@ -1,172 +1,649 @@
-// ============================================================
-// BLOCK BREAKER (base game)
-//
-// game.js  = the canvas, the ball, the paddle, and the game loop
-// bricks.js     = where the bricks are and how they are drawn
-// collisions.js = what happens when the ball touches things
-// ============================================================
-
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
-
-const WIDTH = canvas.width;   // 600
-const HEIGHT = canvas.height; // 450
-
-
-// ------------------------------------------------------------
-// THE BALL
-// x and y are the top-left corner. vx and vy are how many pixels
-// the ball moves each update (vx = sideways, vy = up/down).
-// A positive vy means the ball is moving DOWN the screen.
-// ------------------------------------------------------------
-const BALL_SPEED = 4;
-
-const ball = {
-  x: 0,
-  y: 0,
-  width: 12,
-  height: 12,
-  vx: 0,
-  vy: 0
-};
-
-// Put the ball in the center and reset its speed and direction.
-function resetBall() {
-  ball.x = WIDTH / 2 - ball.width / 2;
-  ball.y = HEIGHT / 2 - ball.height / 2;
-  ball.vx = BALL_SPEED;  // right
-  ball.vy = BALL_SPEED;  // down
-}
-
-
-// ------------------------------------------------------------
-// THE PADDLE
-// ------------------------------------------------------------
-const paddle = {
-  x: WIDTH / 2 - 45,
-  y: HEIGHT - 30,
-  width: 90,
-  height: 12,
-  speed: 6
-};
-
-
-// ------------------------------------------------------------
-// THE BRICKS (the list is filled in by makeBricks() in bricks.js)
-// ------------------------------------------------------------
-let bricks = [];
-
-
-// ------------------------------------------------------------
-// KEYBOARD
-// keys["arrowleft"] is true while the left arrow is held down.
-// ------------------------------------------------------------
-const keys = {};
-
-document.addEventListener("keydown", function (event) {
-  keys[event.key.toLowerCase()] = true;
-  // Stop the arrow keys from scrolling the page.
-  if (event.key.startsWith("Arrow")) {
-    event.preventDefault();
-  }
+const radar = document.getElementById("radar");
+const radarCanvas = document.getElementById("radar-screen");
+const radarCtx = radarCanvas.getContext("2d");
+const radarCount = document.getElementById("radar-count");
+const WIDTH = canvas.width;
+const HEIGHT = canvas.height;
+const keys = new Set();
+const ship = { x: WIDTH / 2, y: HEIGHT - 76, width: 38, height: 36, speed: 5.4, cooldown: 0, invulnerable: 0 };
+const allies = ["VEGA", "KITE", "COMET", "ECHO"].map((callsign, index) => {
+  const offset = [-92, -46, 46, 92][index];
+  return { callsign, offset, x: WIDTH / 2 + offset, y: HEIGHT - 52, cooldown: 0.35 + index * 0.12 };
 });
+const stars = Array.from({ length: 110 }, () => ({ x: Math.random() * WIDTH, y: Math.random() * HEIGHT, size: Math.random() * 1.8 + 0.4, speed: Math.random() * 1.3 + 0.35 }));
+const hulls = [
+  { id: "nova", name: "Nova", cost: 0, color: "#4e9bff", accent: "#e4f2ff" },
+  { id: "solar", name: "Solar flare", cost: 25, color: "#ff9b58", accent: "#fff0c2" },
+  { id: "ion", name: "Ion drift", cost: 60, color: "#a78bfa", accent: "#f4eaff" },
+  { id: "frost", name: "Frostline", cost: 90, color: "#88c7ff", accent: "#eef8ff" }
+];
+const weaponCatalog = [
+  { id: "laser", name: "Laser machine gun", type: "starter", cost: 0, detail: "Rapid, accurate laser fire" },
+  { id: "missile", name: "Seeker missile", type: "starter", cost: 0, detail: "Homing hit with heavy damage" },
+  { id: "spread", name: "Tri-burst laser", type: "spread", cost: 55, detail: "Three bolts cover a wide arc" },
+  { id: "plasma", name: "Plasma lance", type: "plasma", cost: 90, detail: "Slow, armor-piercing plasma shot" }
+];
+const threatLevels = { calm: 0.78, standard: 1, veteran: 1.28 };
 
-document.addEventListener("keyup", function (event) {
-  keys[event.key.toLowerCase()] = false;
-});
-
-
-// ------------------------------------------------------------
-// UPDATE: runs 60 times every second. Move things, then check
-// what they touched.
-// ------------------------------------------------------------
-function update() {
-  movePaddle();
-  moveBall();
-
-  bounceOffWalls();   // collisions.js
-  bounceOffPaddle();  // collisions.js
-  bounceOffBricks();  // collisions.js
-
-  // The ball fell off the bottom: back to the center.
-  if (ball.y > HEIGHT) {
-    resetBall();
+function readStore(key, fallback) {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
   }
 }
 
-function movePaddle() {
-  if (keys["arrowleft"] || keys["a"]) {
-    paddle.x = paddle.x - paddle.speed;
-  }
-  if (keys["arrowright"] || keys["d"]) {
-    paddle.x = paddle.x + paddle.speed;
-  }
-
-  // Keep the paddle on the screen.
-  if (paddle.x < 0) {
-    paddle.x = 0;
-  }
-  if (paddle.x + paddle.width > WIDTH) {
-    paddle.x = WIDTH - paddle.width;
+function writeStore(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // The game remains playable when browser storage is unavailable.
   }
 }
 
-function moveBall() {
-  ball.x = ball.x + ball.vx;
-  ball.y = ball.y + ball.vy;
-}
-
-
-// ------------------------------------------------------------
-// DRAW: paints everything on the canvas. Black background,
-// white shapes.
-// ------------------------------------------------------------
-function draw() {
-  ctx.fillStyle = "black";
-  ctx.fillRect(0, 0, WIDTH, HEIGHT);
-
-  ctx.fillStyle = "white";
-  ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
-  ctx.fillRect(ball.x, ball.y, ball.width, ball.height);
-
-  drawBricks();  // bricks.js
-}
-
-
-// ------------------------------------------------------------
-// THE GAME LOOP
-// The browser calls frame() every time it is ready to draw.
-// Some screens are faster than others, so we make sure update()
-// always runs exactly 60 times per second on every computer.
-// ------------------------------------------------------------
-const STEP = 1000 / 60;
+let bullets = [];
+let allyBullets = [];
+let missiles = [];
+let enemyShots = [];
+let enemies = [];
+let particles = [];
+let score = 0;
+let lives = 3;
+let wave = 1;
+let spawnTimer = 0;
+let state = "menu";
+let currentWeapon = "laser";
 let lastTime = 0;
-let leftover = 0;
+let elapsed = 0;
+let highScore = Number(readStore("starfall-high-score", "0")) || 0;
+let credits = Number(readStore("starfall-credits", "0")) || 0;
+let ownedHulls;
+try {
+  ownedHulls = new Set(JSON.parse(readStore("starfall-hulls", '["nova"]')));
+} catch {
+  ownedHulls = new Set(["nova"]);
+}
+ownedHulls.add("nova");
+let activeHull = readStore("starfall-active-hull", "nova");
+if (!hulls.some((hull) => hull.id === activeHull && ownedHulls.has(hull.id))) activeHull = "nova";
+let soundEnabled = readStore("starfall-sound", "false") === "true";
+let ownedWeapons;
+try {
+  ownedWeapons = new Set(JSON.parse(readStore("starfall-weapons", '["laser","missile"]')));
+} catch {
+  ownedWeapons = new Set(["laser", "missile"]);
+}
+ownedWeapons.add("laser");
+ownedWeapons.add("missile");
+if (!ownedWeapons.has(currentWeapon)) currentWeapon = "laser";
+let audioContext;
 
-function frame(now) {
-  leftover = leftover + (now - lastTime);
-  lastTime = now;
+const scoreDisplay = document.getElementById("score");
+const livesDisplay = document.getElementById("lives");
+const waveDisplay = document.getElementById("wave");
+const highScoreDisplay = document.getElementById("high-score");
+const menuBestDisplay = document.getElementById("menu-best");
+const gameoverCopy = document.getElementById("gameover-copy");
+const killFeed = document.getElementById("live-combat-feed");
+const overlay = document.getElementById("overlay");
+const hullList = document.getElementById("hull-list");
+const weaponList = document.getElementById("weapon-list");
+const weaponSelector = document.getElementById("weapon-selector");
+const creditsDisplay = document.getElementById("credits");
+const soundSetting = document.getElementById("sound-setting");
+const difficultySetting = document.getElementById("difficulty-setting");
 
-  // If the tab was hidden for a while, don't try to catch up.
-  if (leftover > 250) {
-    leftover = 250;
+function setState(nextState) {
+  state = nextState;
+  overlay.hidden = nextState === "playing";
+  radar.hidden = nextState !== "playing";
+  document.querySelectorAll("[data-screen]").forEach((screen) => {
+    screen.hidden = screen.dataset.screen !== nextState;
+  });
+  if (nextState === "menu") menuBestDisplay.textContent = String(highScore).padStart(5, "0");
+  if (nextState === "shop") renderShop();
+  if (nextState === "gameover") {
+    gameoverCopy.textContent = `You reached wave ${wave} and scored ${score.toLocaleString()} points.`;
   }
-
-  while (leftover >= STEP) {
-    update();
-    leftover = leftover - STEP;
-  }
-
-  draw();
-  requestAnimationFrame(frame);
 }
 
-function start() {
-  bricks = makeBricks();  // bricks.js
-  resetBall();
+function startGame() {
+  if (state === "playing") return;
+  keys.clear();
+  score = 0;
+  lives = 3;
+  wave = 1;
+  spawnTimer = 0.45;
+  bullets = [];
+  allyBullets = [];
+  missiles = [];
+  enemyShots = [];
+  enemies = [];
+  particles = [];
+  killFeed.replaceChildren();
+  ship.x = WIDTH / 2;
+  for (const ally of allies) {
+    ally.x = ship.x + ally.offset;
+    ally.cooldown = 0.35;
+  }
+  ship.cooldown = 0;
+  ship.invulnerable = 0;
+  updateHud();
+  setState("playing");
   lastTime = performance.now();
   requestAnimationFrame(frame);
 }
 
-// Wait until all three script files have loaded, then start.
-window.addEventListener("load", start);
+function updateHud() {
+  scoreDisplay.textContent = String(score).padStart(5, "0");
+  livesDisplay.textContent = String(Math.max(0, lives));
+  document.getElementById("life-mark").textContent = "◆ ".repeat(Math.max(0, lives)).trim();
+  waveDisplay.textContent = String(wave).padStart(2, "0");
+  highScoreDisplay.textContent = String(highScore).padStart(5, "0");
+}
+
+function playTone(frequency, duration, type, volume) {
+  if (!soundEnabled) return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  audioContext ||= new AudioContextClass();
+  if (audioContext.state === "suspended") audioContext.resume();
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  oscillator.type = type;
+  oscillator.frequency.value = frequency;
+  gain.gain.setValueAtTime(volume, audioContext.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+  oscillator.connect(gain);
+  gain.connect(audioContext.destination);
+  oscillator.start();
+  oscillator.stop(audioContext.currentTime + duration);
+}
+
+function renderShop() {
+  creditsDisplay.textContent = String(credits);
+  hullList.innerHTML = hulls.map((hull) => {
+    const owned = ownedHulls.has(hull.id);
+    const equipped = activeHull === hull.id;
+    const label = equipped ? "Equipped" : owned ? "Equip" : `Acquire · ${hull.cost}`;
+    const disabled = equipped || (!owned && credits < hull.cost);
+    return `<article class="hull-card"><div class="hull-swatch" style="--hull-color:${hull.color};--hull-accent:${hull.accent}" aria-hidden="true"><span>✦</span></div><div class="hull-details"><strong>${hull.name}</strong><span>${owned ? "Squadron issue" : `${hull.cost} flight credits`}</span></div><button class="hull-action" type="button" data-hull="${hull.id}" ${disabled ? "disabled" : ""}>${label}</button></article>`;
+  }).join("");
+  weaponList.innerHTML = weaponCatalog.map((weapon) => {
+    const owned = ownedWeapons.has(weapon.id);
+    const equipped = currentWeapon === weapon.id;
+    const label = equipped ? "Selected" : owned ? "Select" : `Unlock · ${weapon.cost}`;
+    const disabled = equipped || (!owned && credits < weapon.cost);
+    return `<article class="weapon-card"><div class="weapon-icon weapon-icon-${weapon.id}" aria-hidden="true">${weapon.id === "missile" ? "↟" : weapon.id === "spread" ? "⋔" : weapon.id === "plasma" ? "╱" : "╎"}</div><div class="hull-details"><strong>${weapon.name}</strong><span>${owned ? weapon.detail : `${weapon.cost} flight credits · ${weapon.detail}`}</span></div><button class="hull-action" type="button" data-buy-weapon="${weapon.id}" ${disabled ? "disabled" : ""}>${label}</button></article>`;
+  }).join("");
+}
+
+function purchaseOrSelectWeapon(weaponId) {
+  const weapon = weaponCatalog.find((item) => item.id === weaponId);
+  if (!weapon) return;
+  if (!ownedWeapons.has(weaponId)) {
+    if (credits < weapon.cost) return;
+    credits -= weapon.cost;
+    ownedWeapons.add(weaponId);
+    writeStore("starfall-credits", String(credits));
+    writeStore("starfall-weapons", JSON.stringify([...ownedWeapons]));
+  }
+  selectWeapon(weaponId);
+  renderShop();
+}
+
+function purchaseOrEquip(hullId) {
+  const hull = hulls.find((item) => item.id === hullId);
+  if (!hull) return;
+  if (!ownedHulls.has(hullId)) {
+    if (credits < hull.cost) return;
+    credits -= hull.cost;
+    ownedHulls.add(hullId);
+    writeStore("starfall-credits", String(credits));
+    writeStore("starfall-hulls", JSON.stringify([...ownedHulls]));
+  }
+  activeHull = hullId;
+  writeStore("starfall-active-hull", activeHull);
+  renderShop();
+}
+
+function spawnEnemy() {
+  const size = Math.random() < 0.22 ? 30 : 23;
+  const threat = threatLevels[difficultySetting.value] || 1;
+  enemies.push({
+    x: 28 + Math.random() * (WIDTH - 56),
+    y: -size,
+    size,
+    speed: (1.15 + Math.random() * 0.8 + wave * 0.12) * threat,
+    drift: (Math.random() - 0.5) * 1.2,
+    phase: Math.random() * Math.PI * 2,
+    shootTimer: (1.2 + Math.random() * 2) / threat,
+    tough: size > 24,
+    hp: size > 24 ? 2 : 1
+  });
+}
+
+function fire() {
+  if (ship.cooldown > 0) return;
+  if (currentWeapon === "missile") {
+    const target = enemies.reduce((closest, enemy) => {
+      const distance = Math.hypot(enemy.x - ship.x, enemy.y - ship.y);
+      return distance < closest.distance ? { enemy, distance } : closest;
+    }, { enemy: null, distance: Infinity }).enemy;
+    missiles.push({ x: ship.x, y: ship.y - 20, vx: 0, vy: -3.8, speed: 5.2, target, damage: 2, width: 12, height: 18, source: "ACE", active: false });
+    ship.cooldown = 0.8;
+    playTone(180, 0.16, "sawtooth", 0.045);
+    return;
+  }
+  if (currentWeapon === "spread") {
+    for (const vx of [-1.4, 0, 1.4]) bullets.push({ x: ship.x, y: ship.y - 19, vx, speed: 8.2, source: "ACE" });
+    ship.cooldown = 0.24;
+    playTone(520, 0.08, "square", 0.035);
+    return;
+  }
+  if (currentWeapon === "plasma") {
+    bullets.push({ x: ship.x, y: ship.y - 22, speed: 10, damage: 2, width: 9, height: 28, kind: "plasma", source: "ACE" });
+    ship.cooldown = 0.42;
+    playTone(240, 0.12, "sawtooth", 0.04);
+    return;
+  }
+  bullets.push({ x: ship.x, y: ship.y - 19, speed: 8.8, source: "ACE" });
+  ship.cooldown = 0.075;
+  playTone(620, 0.045, "square", 0.025);
+}
+
+function selectWeapon(weapon) {
+  if (!ownedWeapons.has(weapon)) return;
+  currentWeapon = weapon;
+  renderWeaponSelector();
+}
+
+function renderWeaponSelector() {
+  weaponSelector.innerHTML = weaponCatalog.filter((weapon) => ownedWeapons.has(weapon.id)).map((weapon, index) => `<button type="button" data-weapon="${weapon.id}" aria-pressed="${weapon.id === currentWeapon}"><kbd>${index + 1}</kbd> ${weapon.id === "missile" ? "SEEKER" : weapon.id === "spread" ? "TRI-BURST" : weapon.id === "plasma" ? "PLASMA" : "LASER MG"}</button>`).join("");
+}
+
+function addKillFeedEntry(callsign, enemy) {
+  const entry = document.createElement("div");
+  entry.className = "feed-entry";
+  const source = document.createElement("strong");
+  source.textContent = callsign;
+  const result = document.createElement("span");
+  result.textContent = `DESTROYED ${enemy.tough ? "ELITE" : "RAIDER"}`;
+  entry.append(source, result);
+  killFeed.prepend(entry);
+  while (killFeed.children.length > 4) killFeed.lastElementChild.remove();
+  window.setTimeout(() => entry.remove(), 5000);
+}
+
+function burst(x, y, color, amount = 12) {
+  for (let index = 0; index < amount; index += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 0.8 + Math.random() * 3.2;
+    particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 0.35 + Math.random() * 0.55, color, size: 1 + Math.random() * 2.5 });
+  }
+}
+
+function overlaps(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+
+function update(delta) {
+  elapsed += delta;
+  for (const star of stars) {
+    star.y += star.speed * delta * 60;
+    if (star.y > HEIGHT) {
+      star.y = -2;
+      star.x = Math.random() * WIDTH;
+    }
+  }
+
+  if (keys.has("arrowleft") || keys.has("a") || keys.has("touch-left")) ship.x -= ship.speed * delta * 60;
+  if (keys.has("arrowright") || keys.has("d") || keys.has("touch-right")) ship.x += ship.speed * delta * 60;
+  if (keys.has(" ") || keys.has("touch-fire")) fire();
+  ship.x = Math.max(ship.width / 2 + 8, Math.min(WIDTH - ship.width / 2 - 8, ship.x));
+  ship.cooldown = Math.max(0, ship.cooldown - delta);
+  ship.invulnerable = Math.max(0, ship.invulnerable - delta);
+  for (const ally of allies) {
+    const targetX = Math.max(20, Math.min(WIDTH - 20, ship.x + ally.offset));
+    ally.x += (targetX - ally.x) * Math.min(1, delta * 8);
+    ally.y = ship.y + 22;
+    ally.cooldown -= delta;
+  }
+
+  spawnTimer -= delta;
+  if (spawnTimer <= 0) {
+    spawnEnemy();
+    const threat = threatLevels[difficultySetting.value] || 1;
+    spawnTimer = Math.max(0.32, 1.05 - wave * 0.035) * (0.7 + Math.random() * 0.6) / threat;
+  }
+
+  for (const bullet of bullets) bullet.y -= bullet.speed * delta * 60;
+  for (const bullet of allyBullets) bullet.y -= bullet.speed * delta * 60;
+  for (const missile of missiles) {
+    if (missile.target && !missile.target.active && enemies.includes(missile.target)) {
+      const desiredAngle = Math.atan2(missile.target.y - missile.y, missile.target.x - missile.x);
+      const currentAngle = Math.atan2(missile.vy, missile.vx);
+      const difference = Math.atan2(Math.sin(desiredAngle - currentAngle), Math.cos(desiredAngle - currentAngle));
+      const angle = currentAngle + difference * Math.min(1, delta * 3.5);
+      missile.vx = Math.cos(angle) * missile.speed;
+      missile.vy = Math.sin(angle) * missile.speed;
+    }
+    missile.x += missile.vx * delta * 60;
+    missile.y += missile.vy * delta * 60;
+  }
+  for (const shot of enemyShots) shot.y += shot.speed * delta * 60;
+  bullets = bullets.filter((bullet) => bullet.y > -12);
+  allyBullets = allyBullets.filter((bullet) => bullet.y > -12);
+  missiles = missiles.filter((missile) => missile.y > -18 && missile.y < HEIGHT + 18 && missile.x > -18 && missile.x < WIDTH + 18 && !missile.active);
+  enemyShots = enemyShots.filter((shot) => shot.y < HEIGHT + 12);
+
+  for (const enemy of enemies) {
+    enemy.phase += delta * 2;
+    enemy.y += enemy.speed * delta * 60;
+    enemy.x += (enemy.drift + Math.sin(enemy.phase) * 0.55) * delta * 60;
+    enemy.x = Math.max(enemy.size / 2, Math.min(WIDTH - enemy.size / 2, enemy.x));
+    enemy.shootTimer -= delta;
+    if (enemy.shootTimer <= 0 && enemy.y > 10 && enemy.y < HEIGHT - 150) {
+      const threat = threatLevels[difficultySetting.value] || 1;
+      enemyShots.push({ x: enemy.x, y: enemy.y + enemy.size / 2, speed: (3.2 + wave * 0.12) * threat });
+      enemy.shootTimer = (2 + Math.random() * 1.6) / threat;
+    }
+  }
+
+  for (const ally of allies) {
+    if (ally.cooldown > 0 || enemies.length === 0) continue;
+    const target = enemies.reduce((closest, enemy) => {
+      const distance = Math.abs(enemy.x - ally.x) + Math.max(0, ally.y - enemy.y) * 0.45;
+      return distance < closest.distance ? { enemy, distance } : closest;
+    }, { enemy: enemies[0], distance: Infinity }).enemy;
+    allyBullets.push({ x: ally.x, y: ally.y - 12, speed: 7.2, source: ally.callsign });
+    ally.cooldown = 0.62 + Math.random() * 0.35;
+    playTone(440, 0.035, "triangle", 0.012);
+  }
+
+  for (const enemy of enemies) {
+    for (const bullet of [...bullets, ...allyBullets, ...missiles]) {
+      if (bullet.active || !overlaps(bullet.x - 2, bullet.y - 8, 4, 16, enemy.x - enemy.size / 2, enemy.y - enemy.size / 2, enemy.size, enemy.size)) continue;
+      bullet.active = true;
+      enemy.hp -= bullet.damage || 1;
+      if (enemy.hp <= 0) {
+        enemy.active = true;
+        score += enemy.tough ? 30 : 10;
+        credits += enemy.tough ? 3 : 1;
+        writeStore("starfall-credits", String(credits));
+        playTone(enemy.tough ? 280 : 420, 0.12, "triangle", 0.045);
+        addKillFeedEntry(bullet.source || "SQUADRON", enemy);
+        burst(enemy.x, enemy.y, enemy.tough ? "#ff9b58" : "#ff5d73", 14);
+      } else {
+        burst(enemy.x, enemy.y, "#ffd166", 4);
+      }
+    }
+  }
+  bullets = bullets.filter((bullet) => !bullet.active);
+  allyBullets = allyBullets.filter((bullet) => !bullet.active);
+  missiles = missiles.filter((missile) => !missile.active);
+  enemies = enemies.filter((enemy) => {
+    if (enemy.active) return false;
+    if (enemy.y > HEIGHT + enemy.size) {
+      loseLife();
+      return false;
+    }
+    return true;
+  });
+
+  if (ship.invulnerable <= 0) {
+    for (const enemy of enemies) {
+      if (!overlaps(ship.x - 13, ship.y - 15, 26, 30, enemy.x - enemy.size / 2, enemy.y - enemy.size / 2, enemy.size, enemy.size)) continue;
+      enemy.active = true;
+      burst(enemy.x, enemy.y, "#ff4055", 12);
+      loseLife();
+      break;
+    }
+    for (const shot of enemyShots) {
+      if (shot.active || !overlaps(ship.x - 13, ship.y - 15, 26, 30, shot.x - 4, shot.y - 6, 8, 12)) continue;
+      shot.active = true;
+      burst(shot.x, shot.y, "#ff5d73", 5);
+      loseLife();
+      break;
+    }
+  }
+  enemyShots = enemyShots.filter((shot) => !shot.active);
+
+  for (const particle of particles) {
+    particle.x += particle.vx * delta * 60;
+    particle.y += particle.vy * delta * 60;
+    particle.life -= delta;
+  }
+  particles = particles.filter((particle) => particle.life > 0);
+
+  wave = 1 + Math.floor(score / 180);
+  updateHud();
+}
+
+function loseLife() {
+  if (ship.invulnerable > 0 || state !== "playing") return;
+  lives -= 1;
+  ship.invulnerable = 1.35;
+  playTone(110, 0.28, "sawtooth", 0.06);
+  burst(ship.x, ship.y, "#67e8d2", 18);
+  if (lives <= 0) {
+    highScore = Math.max(highScore, score);
+    writeStore("starfall-high-score", String(highScore));
+    setState("gameover");
+  }
+}
+
+function drawShip() {
+  if (ship.invulnerable > 0 && Math.floor(elapsed * 14) % 2 === 0) return;
+  const hull = hulls.find((item) => item.id === activeHull) || hulls[0];
+  ctx.save();
+  ctx.translate(ship.x, ship.y);
+  ctx.fillStyle = hull.color;
+  ctx.beginPath();
+  ctx.moveTo(0, -20);
+  ctx.lineTo(17, 15);
+  ctx.lineTo(7, 11);
+  ctx.lineTo(0, 16);
+  ctx.lineTo(-7, 11);
+  ctx.lineTo(-17, 15);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = hull.accent;
+  ctx.beginPath();
+  ctx.moveTo(0, -11);
+  ctx.lineTo(5, 5);
+  ctx.lineTo(-5, 5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#ff9b58";
+  ctx.fillRect(-3, 14, 6, 7 + Math.random() * 5);
+  ctx.restore();
+}
+
+function drawEnemy(enemy) {
+  ctx.save();
+  ctx.translate(enemy.x, enemy.y);
+  ctx.fillStyle = enemy.tough ? "#b9223d" : "#ff4055";
+  ctx.beginPath();
+  ctx.moveTo(0, enemy.size / 2);
+  ctx.lineTo(-enemy.size / 2, -enemy.size / 4);
+  ctx.lineTo(-enemy.size / 3, -enemy.size / 2);
+  ctx.lineTo(0, -enemy.size / 3);
+  ctx.lineTo(enemy.size / 3, -enemy.size / 2);
+  ctx.lineTo(enemy.size / 2, -enemy.size / 4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#510e20";
+  ctx.fillRect(-enemy.size / 4, -2, 4, 4);
+  ctx.fillRect(enemy.size / 4 - 4, -2, 4, 4);
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, WIDTH, HEIGHT);
+  ctx.fillStyle = "#071018";
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  ctx.fillStyle = "#d6f7f1";
+  for (const star of stars) {
+    ctx.globalAlpha = 0.35 + star.size * 0.3;
+    ctx.fillRect(star.x, star.y, star.size, star.size);
+  }
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "rgba(101, 229, 211, 0.08)";
+  ctx.beginPath();
+  ctx.moveTo(0, HEIGHT - 36);
+  ctx.lineTo(WIDTH, HEIGHT - 36);
+  ctx.stroke();
+  for (const bullet of bullets) {
+    ctx.fillStyle = "#8fffee";
+    ctx.shadowColor = "#65e5d3";
+    ctx.shadowBlur = 12;
+    ctx.fillRect(bullet.x - 2, bullet.y - 8, 4, 16);
+  }
+  for (const bullet of allyBullets) {
+    ctx.fillStyle = "#75b8ff";
+    ctx.shadowColor = "#4e9bff";
+    ctx.shadowBlur = 8;
+    ctx.fillRect(bullet.x - 1.5, bullet.y - 7, 3, 14);
+  }
+  ctx.shadowBlur = 0;
+  for (const shot of enemyShots) {
+    ctx.fillStyle = "#ff4055";
+    ctx.beginPath();
+    ctx.arc(shot.x, shot.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  for (const enemy of enemies) drawEnemy(enemy);
+  for (const ally of allies) drawWingmate(ally);
+  for (const particle of particles) {
+    ctx.globalAlpha = Math.min(1, particle.life * 2);
+    ctx.fillStyle = particle.color;
+    ctx.fillRect(particle.x, particle.y, particle.size, particle.size);
+  }
+  ctx.globalAlpha = 1;
+  drawShip();
+  drawRadar();
+}
+
+function drawWingmate(ally) {
+  ctx.save();
+  ctx.translate(ally.x, ally.y);
+  ctx.fillStyle = "#4e9bff";
+  ctx.beginPath();
+  ctx.moveTo(0, -12);
+  ctx.lineTo(10, 9);
+  ctx.lineTo(0, 5);
+  ctx.lineTo(-10, 9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#d9ecff";
+  ctx.fillRect(-2, -4, 4, 6);
+  ctx.restore();
+}
+
+function drawRadar() {
+  if (radar.hidden) return;
+  const width = radarCanvas.width;
+  const height = radarCanvas.height;
+  const padding = 12;
+  const plotWidth = width - padding * 2;
+  const plotHeight = height - padding * 2;
+  radarCtx.clearRect(0, 0, width, height);
+  radarCtx.fillStyle = "#08151a";
+  radarCtx.fillRect(0, 0, width, height);
+  radarCtx.strokeStyle = "rgba(101, 229, 211, 0.22)";
+  radarCtx.lineWidth = 1;
+  radarCtx.beginPath();
+  radarCtx.moveTo(padding, height / 2);
+  radarCtx.lineTo(width - padding, height / 2);
+  radarCtx.moveTo(width / 2, padding);
+  radarCtx.lineTo(width / 2, height - padding);
+  radarCtx.arc(width / 2, height / 2, Math.min(plotWidth, plotHeight) * 0.42, 0, Math.PI * 2);
+  radarCtx.stroke();
+
+  const sweepAngle = elapsed * 1.3;
+  radarCtx.strokeStyle = "rgba(101, 229, 211, 0.55)";
+  radarCtx.beginPath();
+  radarCtx.moveTo(width / 2, height / 2);
+  radarCtx.lineTo(width / 2 + Math.cos(sweepAngle) * plotWidth / 2, height / 2 + Math.sin(sweepAngle) * plotHeight / 2);
+  radarCtx.stroke();
+
+  for (const enemy of enemies) {
+    const x = padding + enemy.x / WIDTH * plotWidth;
+    const y = padding + Math.max(0, Math.min(HEIGHT, enemy.y)) / HEIGHT * plotHeight;
+    radarCtx.fillStyle = "#ff4055";
+    radarCtx.beginPath();
+    radarCtx.arc(x, y, enemy.tough ? 3 : 2, 0, Math.PI * 2);
+    radarCtx.fill();
+  }
+  radarCtx.fillStyle = "#4e9bff";
+  for (const ally of allies) {
+    const x = padding + ally.x / WIDTH * plotWidth;
+    radarCtx.fillRect(x - 1.5, height - padding - 2, 3, 3);
+  }
+  radarCtx.fillStyle = "#d9ecff";
+  radarCtx.beginPath();
+  radarCtx.arc(padding + ship.x / WIDTH * plotWidth, height - padding - 2, 2.5, 0, Math.PI * 2);
+  radarCtx.fill();
+  radarCount.textContent = String(enemies.length).padStart(2, "0");
+}
+
+function frame(now) {
+  if (state !== "playing") return;
+  const delta = Math.min((now - lastTime) / 1000, 0.04);
+  lastTime = now;
+  update(delta);
+  draw();
+  if (state === "playing") requestAnimationFrame(frame);
+}
+
+document.addEventListener("keydown", (event) => {
+  if (state !== "playing") {
+    if (event.key === "Escape" && state !== "menu") setState("menu");
+    return;
+  }
+  const key = event.key.toLowerCase();
+  if (["arrowleft", "arrowright", " "].includes(key)) event.preventDefault();
+  keys.add(key);
+});
+document.addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));
+window.addEventListener("blur", () => keys.clear());
+
+overlay.addEventListener("click", (event) => {
+  const action = event.target.closest("[data-action]")?.dataset.action;
+  if (action === "play" || action === "retry") startGame();
+  else if (action === "settings" || action === "shop" || action === "menu") setState(action);
+});
+hullList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-hull]");
+  if (button) purchaseOrEquip(button.dataset.hull);
+});
+
+soundSetting.checked = soundEnabled;
+soundSetting.addEventListener("change", () => {
+  soundEnabled = soundSetting.checked;
+  writeStore("starfall-sound", String(soundEnabled));
+  if (soundEnabled) playTone(520, 0.08, "sine", 0.04);
+});
+const savedThreat = readStore("starfall-difficulty", "standard");
+difficultySetting.value = Object.hasOwn(threatLevels, savedThreat) ? savedThreat : "standard";
+difficultySetting.addEventListener("change", () => writeStore("starfall-difficulty", difficultySetting.value));
+
+document.querySelectorAll("[data-control]").forEach((button) => {
+  const control = `touch-${button.dataset.control}`;
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    button.setPointerCapture(event.pointerId);
+    keys.add(control);
+  });
+  const release = () => keys.delete(control);
+  button.addEventListener("pointerup", release);
+  button.addEventListener("pointercancel", release);
+  button.addEventListener("lostpointercapture", release);
+});
+
+updateHud();
+setState("menu");
+draw();

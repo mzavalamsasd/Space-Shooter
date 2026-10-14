@@ -3,18 +3,90 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Block Breaker</title>
+  <meta name="theme-color" content="#071018">
+  <title>Starfall — Defense Squadron</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main>
-    <canvas id="game" width="600" height="450" aria-label="Block Breaker game"></canvas>
-    <p>Move the paddle with the left and right arrow keys, or A and D.</p>
+  <main class="cabinet">
+    <header class="topbar">
+      <div class="wordmark"><span class="wordmark-mark" aria-hidden="true">✳</span> STARFALL <span class="wordmark-sub">/ DEFENSE SQUADRON</span></div>
+      <div class="signal"><span class="signal-dot"></span> FRONTIER SECTOR 07</div>
+    </header>
+
+    <section class="mission-bar" aria-label="Mission status">
+      <div class="mission-title"><span class="eyebrow">ACTIVE DEPLOYMENT</span><strong>THE OUTER RIM</strong></div>
+      <div class="readout"><span>SCORE</span><strong id="score">00000</strong></div>
+      <div class="readout"><span>BEST</span><strong id="high-score">00000</strong></div>
+      <div class="readout"><span>WAVE</span><strong id="wave">01</strong></div>
+      <div class="readout lives-readout"><span>HULL</span><strong><span id="lives">3</span><i class="life-mark" id="life-mark" aria-hidden="true">◆ ◆ ◆</i></strong></div>
+    </section>
+
+    <section class="game-shell" aria-label="Starfall space shooter">
+      <canvas id="game" width="960" height="600" aria-label="Space shooter game. Move your ship and shoot incoming enemies."></canvas>
+      <aside class="radar" id="radar" aria-label="Enemy radar" hidden>
+        <div class="radar-heading"><span>TACTICAL RADAR</span><strong id="radar-count">00</strong></div>
+        <canvas id="radar-screen" width="144" height="88" aria-label="Live positions of enemy ships and allied squadron"></canvas>
+      </aside>
+      <aside class="escort-status" id="escort-status" aria-live="polite" hidden>
+        <strong id="escort-label">ESCORT TRANSPORT</strong>
+        <span class="escort-hull-track"><i id="escort-hull"></i></span>
+        <span id="escort-integrity">HULL 3 / 3</span>
+      </aside>
+        <div class="kill-feed" id="kill-feed" aria-label="Combat kill feed" aria-live="polite"></div>
+        <div class="live-combat-feed" id="live-combat-feed" aria-label="Live combat feed" aria-live="polite"></div>
+      <div class="screen-overlay" id="overlay" aria-live="polite">
+        <section class="menu-screen" data-screen="menu">
+          <div class="menu-intro">
+            <span class="eyebrow">INCOMING TRANSMISSION · 07</span>
+            <h1>DEFEND THE FRONTIER</h1>
+            <p>"Threat signatures closing. It all comes down to your squadron now."</p>
+          </div>
+          <nav class="menu-actions" aria-label="Main menu">
+            <button class="menu-button menu-button-primary" type="button" data-action="play"><span class="menu-index">01</span><strong>Play</strong><span class="menu-arrow" aria-hidden="true">→</span></button>
+            <button class="menu-button" type="button" data-action="settings"><span class="menu-index">02</span><strong>Settings</strong><span class="menu-arrow" aria-hidden="true">↗</span></button>
+            <button class="menu-button" type="button" data-action="shop"><span class="menu-index">03</span><strong>Ship hangar</strong><span class="menu-arrow" aria-hidden="true">↗</span></button>
+          </nav>
+          <div class="menu-record"><span>PERSONAL BEST</span><strong id="menu-best">00000</strong></div>
+        </section>
+
+        <section class="page-panel" data-screen="settings" hidden>
+          <header class="panel-heading"><div><span class="eyebrow">FLIGHT SYSTEMS</span><h2>Settings</h2></div><button class="back-button" type="button" data-action="menu">← Menu</button></header>
+          <label class="setting-row" for="sound-setting"><span><strong>Sound effects</strong><small>Weapon and impact audio</small></span><input id="sound-setting" type="checkbox"></label>
+          <label class="setting-row" for="difficulty-setting"><span><strong>Threat profile</strong><small>Adjust enemy speed and pressure</small></span><select id="difficulty-setting"><option value="calm">Patrol</option><option value="standard">Standard</option><option value="veteran">Veteran</option></select></label>
+        </section>
+
+        <section class="page-panel shop-panel" data-screen="shop" hidden>
+          <header class="panel-heading"><div><span class="eyebrow">SQUADRON SUPPLY</span><h2>Ship hangar</h2></div><div class="shop-balance"><span>FLIGHT CREDITS</span><strong id="credits">0</strong></div></header>
+          <h3 class="shop-section-title">WEAPON SYSTEMS</h3>
+          <div class="weapon-list" id="weapon-list"></div>
+          <h3 class="shop-section-title hull-section-title">SHIP HULLS</h3>
+          <div class="shop-grid" id="hull-list"></div>
+          <button class="back-button shop-back" type="button" data-action="menu">← Back to menu</button>
+        </section>
+
+        <section class="page-panel gameover-panel" data-screen="gameover" hidden>
+          <span class="eyebrow">SIGNAL LOST · SECTOR 07</span>
+          <h2>MISSION FAILED</h2>
+          <p id="gameover-copy"></p>
+          <div class="gameover-actions"><button class="action-button" type="button" data-action="retry">Fly again <span aria-hidden="true">→</span></button><button class="back-button" type="button" data-action="menu">Main menu</button></div>
+        </section>
+      </div>
+      <div class="sector-label"><span>SECTOR 07</span><span>THREAT LEVEL: <b>RISING</b></span></div>
+    </section>
+
+    <footer class="bottom-bar">
+      <div class="desktop-controls"><span><kbd>←</kbd><kbd>→</kbd> or <kbd>A</kbd><kbd>D</kbd> MOVE</span><span><kbd>SPACE</kbd> FIRE</span></div>
+      <nav class="arsenal" id="weapon-selector" aria-label="Select weapon"></nav>
+      <span class="comms"><span class="signal-dot"></span> COMMS ONLINE</span>
+    </footer>
+    <nav class="touch-controls" aria-label="Touch game controls">
+      <button type="button" data-control="left" aria-label="Move left">←</button>
+      <button type="button" data-control="right" aria-label="Move right">→</button>
+      <button type="button" data-control="fire" aria-label="Fire">FIRE <span aria-hidden="true">✳</span></button>
+    </nav>
   </main>
 
-  <!-- The order matters: game.js goes first because the other files use its settings. -->
   <script src="game.js"></script>
-  <script src="bricks.js"></script>
-  <script src="collisions.js"></script>
 </body>
 </html>
