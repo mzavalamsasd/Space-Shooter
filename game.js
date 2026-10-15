@@ -10,7 +10,7 @@ const keys = new Set();
 const ship = { x: WIDTH / 2, y: HEIGHT - 76, width: 38, height: 36, speed: 5.4, cooldown: 0, invulnerable: 0 };
 const allies = ["VEGA", "KITE", "COMET", "ECHO"].map((callsign, index) => {
   const x = WIDTH / 2 + [-92, -46, 46, 92][index];
-  return { callsign, x, y: HEIGHT - 52, targetX: x, targetY: HEIGHT - 52, roamTimer: index * 0.2, cooldown: 0.35 + index * 0.12 };
+  return { callsign, x, y: HEIGHT - 52, targetX: x, targetY: HEIGHT - 52, roamTimer: index * 0.2, cooldown: 0.35 + index * 0.12, health: 2, active: true };
 });
 const stars = Array.from({ length: 110 }, () => ({ x: Math.random() * WIDTH, y: Math.random() * HEIGHT, size: Math.random() * 1.8 + 0.4, speed: Math.random() * 1.3 + 0.35 }));
 const hulls = [
@@ -136,6 +136,8 @@ function startGame() {
   killFeed.replaceChildren();
   ship.x = WIDTH / 2;
   for (const ally of allies) {
+    ally.health = 2;
+    ally.active = true;
     ally.x = ship.x + (Math.random() - 0.5) * 90;
     ally.y = ship.y - 35 + (Math.random() - 0.5) * 55;
     ally.targetX = ally.x;
@@ -227,17 +229,20 @@ function purchaseOrEquip(hullId) {
 function spawnEnemy() {
   const size = Math.random() < 0.22 ? 30 : 23;
   const threat = threatLevels[difficultySetting.value] || 1;
-  enemies.push({
+  const enemy = {
     x: 28 + Math.random() * (WIDTH - 56),
-    y: -size,
+    y: size / 2 + 8,
     size,
     speed: (1.15 + Math.random() * 0.8 + wave * 0.12) * threat,
+    verticalDirection: Math.random() < 0.5 ? -1 : 1,
     drift: (Math.random() - 0.5) * 1.2,
     phase: Math.random() * Math.PI * 2,
     shootTimer: (1.2 + Math.random() * 2) / threat,
     tough: size > 24,
     hp: size > 24 ? 2 : 1
-  });
+  };
+  enemies.push(enemy);
+  addShipArrivalEntry(enemy);
 }
 
 function startEscortMission() {
@@ -316,17 +321,25 @@ function renderWeaponSelector() {
   weaponSelector.innerHTML = weaponCatalog.filter((weapon) => ownedWeapons.has(weapon.id)).map((weapon, index) => `<button type="button" data-weapon="${weapon.id}" aria-pressed="${weapon.id === currentWeapon}"><kbd>${index + 1}</kbd> ${weapon.id === "missile" ? "SEEKER" : weapon.id === "spread" ? "TRI-BURST" : weapon.id === "plasma" ? "PLASMA" : "LASER MG"}</button>`).join("");
 }
 
-function addKillFeedEntry(callsign, enemy) {
+function addFeedEntry(sourceText, resultText, variant = "") {
   const entry = document.createElement("div");
-  entry.className = "feed-entry";
+  entry.className = `feed-entry ${variant}`.trim();
   const source = document.createElement("strong");
-  source.textContent = callsign;
+  source.textContent = sourceText;
   const result = document.createElement("span");
-  result.textContent = `DESTROYED ${enemy.tough ? "ELITE" : "RAIDER"}`;
+  result.textContent = resultText;
   entry.append(source, result);
   killFeed.prepend(entry);
   while (killFeed.children.length > 4) killFeed.lastElementChild.remove();
   window.setTimeout(() => entry.remove(), 5000);
+}
+
+function addKillFeedEntry(callsign, enemy) {
+  addFeedEntry(callsign, `DESTROYED ${enemy.tough ? "ELITE" : "RAIDER"}`);
+}
+
+function addShipArrivalEntry(enemy) {
+  addFeedEntry("RADAR", enemy.tough ? "ELITE SHIP INBOUND" : "ALIEN SHIP INBOUND", "feed-alert");
 }
 
 function burst(x, y, color, amount = 12) {
@@ -358,6 +371,7 @@ function update(delta) {
   ship.cooldown = Math.max(0, ship.cooldown - delta);
   ship.invulnerable = Math.max(0, ship.invulnerable - delta);
   for (const ally of allies) {
+    if (!ally.active) continue;
     ally.roamTimer -= delta;
     if (ally.roamTimer <= 0 || Math.hypot(ally.targetX - ally.x, ally.targetY - ally.y) < 12) {
       ally.targetX = 24 + Math.random() * (WIDTH - 48);
@@ -381,7 +395,10 @@ function update(delta) {
     bullet.x += (bullet.vx || 0) * delta * 60;
     bullet.y -= bullet.speed * delta * 60;
   }
-  for (const bullet of allyBullets) bullet.y -= bullet.speed * delta * 60;
+  for (const bullet of allyBullets) {
+    bullet.x += bullet.vx * delta * 60;
+    bullet.y += bullet.vy * delta * 60;
+  }
   for (const missile of missiles) {
     if (missile.target && !missile.target.active && enemies.includes(missile.target)) {
       const desiredAngle = Math.atan2(missile.target.y - missile.y, missile.target.x - missile.x);
@@ -394,21 +411,43 @@ function update(delta) {
     missile.x += missile.vx * delta * 60;
     missile.y += missile.vy * delta * 60;
   }
-  for (const shot of enemyShots) shot.y += shot.speed * delta * 60;
+  for (const shot of enemyShots) {
+    shot.x += shot.vx * delta * 60;
+    shot.y += shot.vy * delta * 60;
+  }
   bullets = bullets.filter((bullet) => bullet.y > -12);
-  allyBullets = allyBullets.filter((bullet) => bullet.y > -12);
+  allyBullets = allyBullets.filter((bullet) => bullet.y > -12 && bullet.y < HEIGHT + 12 && bullet.x > -12 && bullet.x < WIDTH + 12);
   missiles = missiles.filter((missile) => missile.y > -18 && missile.y < HEIGHT + 18 && missile.x > -18 && missile.x < WIDTH + 18 && !missile.active);
-  enemyShots = enemyShots.filter((shot) => shot.y < HEIGHT + 12);
+  enemyShots = enemyShots.filter((shot) => shot.y > -12 && shot.y < HEIGHT + 12 && shot.x > -12 && shot.x < WIDTH + 12);
 
   for (const enemy of enemies) {
     enemy.phase += delta * 2;
-    enemy.y += enemy.speed * delta * 60;
+    enemy.y += enemy.verticalDirection * enemy.speed * delta * 60;
+    const minY = enemy.size / 2 + 8;
+    const maxY = HEIGHT * 0.58;
+    if (enemy.y < minY) {
+      enemy.y = minY;
+      enemy.verticalDirection = 1;
+    } else if (enemy.y > maxY) {
+      enemy.y = maxY;
+      enemy.verticalDirection = -1;
+    }
     enemy.x += (enemy.drift + Math.sin(enemy.phase) * 0.55) * delta * 60;
     enemy.x = Math.max(enemy.size / 2, Math.min(WIDTH - enemy.size / 2, enemy.x));
     enemy.shootTimer -= delta;
     if (enemy.shootTimer <= 0 && enemy.y > 10 && enemy.y < HEIGHT - 150) {
       const threat = threatLevels[difficultySetting.value] || 1;
-      enemyShots.push({ x: enemy.x, y: enemy.y + enemy.size / 2, speed: (3.2 + wave * 0.12) * threat });
+      const targets = [ship, ...allies.filter((ally) => ally.active)];
+      if (transport) targets.push(transport);
+      const target = targets[Math.floor(Math.random() * targets.length)];
+      const speed = (3.2 + wave * 0.12) * threat;
+      const distance = Math.hypot(target.x - enemy.x, target.y - enemy.y) || 1;
+      enemyShots.push({
+        x: enemy.x,
+        y: enemy.y + enemy.size / 2,
+        vx: (target.x - enemy.x) / distance * speed,
+        vy: (target.y - enemy.y) / distance * speed
+      });
       enemy.shootTimer = (2 + Math.random() * 1.6) / threat;
     }
   }
@@ -419,12 +458,19 @@ function update(delta) {
   }
 
   for (const ally of allies) {
-    if (ally.cooldown > 0 || enemies.length === 0) continue;
+    if (!ally.active || ally.cooldown > 0 || enemies.length === 0) continue;
     const target = enemies.reduce((closest, enemy) => {
       const distance = Math.abs(enemy.x - ally.x) + Math.max(0, ally.y - enemy.y) * 0.45;
       return distance < closest.distance ? { enemy, distance } : closest;
     }, { enemy: enemies[0], distance: Infinity }).enemy;
-    allyBullets.push({ x: ally.x, y: ally.y - 12, speed: 7.2, source: ally.callsign });
+    const distance = Math.hypot(target.x - ally.x, target.y - ally.y) || 1;
+    allyBullets.push({
+      x: ally.x,
+      y: ally.y - 12,
+      vx: (target.x - ally.x) / distance * 7.2,
+      vy: (target.y - ally.y) / distance * 7.2,
+      source: ally.callsign
+    });
     ally.cooldown = 0.62 + Math.random() * 0.35;
     playTone(440, 0.035, "triangle", 0.012);
   }
@@ -472,6 +518,20 @@ function update(delta) {
         break;
       }
       updateEscortHud();
+    }
+  }
+
+  for (const ally of allies) {
+    if (!ally.active) continue;
+    for (const shot of enemyShots) {
+      if (shot.active || !overlaps(ally.x - 10, ally.y - 10, 20, 20, shot.x - 4, shot.y - 6, 8, 12)) continue;
+      shot.active = true;
+      ally.health -= 1;
+      burst(shot.x, shot.y, "#ff5d73", 5);
+      if (ally.health <= 0) {
+        ally.active = false;
+        burst(ally.x, ally.y, "#4e9bff", 12);
+      }
     }
   }
 
@@ -528,27 +588,70 @@ function loseLife() {
 function drawShip() {
   if (ship.invulnerable > 0 && Math.floor(elapsed * 14) % 2 === 0) return;
   const hull = hulls.find((item) => item.id === activeHull) || hulls[0];
+  const enginePulse = 8 + Math.sin(elapsed * 24) * 2.5;
   ctx.save();
   ctx.translate(ship.x, ship.y);
+  const flame = ctx.createLinearGradient(0, 12, 0, 22 + enginePulse);
+  flame.addColorStop(0, "#fff3a6");
+  flame.addColorStop(0.35, hull.accent);
+  flame.addColorStop(1, "rgba(78, 155, 255, 0)");
+  ctx.fillStyle = flame;
+  ctx.beginPath();
+  ctx.moveTo(-4, 12);
+  ctx.lineTo(0, 22 + enginePulse);
+  ctx.lineTo(4, 12);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowColor = hull.color;
+  ctx.shadowBlur = 14;
   ctx.fillStyle = hull.color;
   ctx.beginPath();
   ctx.moveTo(0, -20);
-  ctx.lineTo(17, 15);
-  ctx.lineTo(7, 11);
-  ctx.lineTo(0, 16);
-  ctx.lineTo(-7, 11);
-  ctx.lineTo(-17, 15);
+  ctx.lineTo(5, -5);
+  ctx.lineTo(18, 13);
+  ctx.lineTo(17, 17);
+  ctx.lineTo(6, 12);
+  ctx.lineTo(0, 17);
+  ctx.lineTo(-6, 12);
+  ctx.lineTo(-17, 17);
+  ctx.lineTo(-18, 13);
+  ctx.lineTo(-5, -5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "rgba(7, 16, 24, 0.38)";
+  ctx.beginPath();
+  ctx.moveTo(0, -14);
+  ctx.lineTo(3, 7);
+  ctx.lineTo(0, 11);
+  ctx.lineTo(-3, 7);
   ctx.closePath();
   ctx.fill();
   ctx.fillStyle = hull.accent;
   ctx.beginPath();
-  ctx.moveTo(0, -11);
-  ctx.lineTo(5, 5);
-  ctx.lineTo(-5, 5);
+  ctx.moveTo(-11, 7);
+  ctx.lineTo(-4, 2);
+  ctx.lineTo(-6, 9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(11, 7);
+  ctx.lineTo(4, 2);
+  ctx.lineTo(6, 9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = hull.accent;
+  ctx.beginPath();
+  ctx.moveTo(0, -13);
+  ctx.lineTo(4, -2);
+  ctx.lineTo(3, 4);
+  ctx.lineTo(-3, 4);
+  ctx.lineTo(-4, -2);
   ctx.closePath();
   ctx.fill();
   ctx.fillStyle = "#ff9b58";
-  ctx.fillRect(-3, 14, 6, 7 + Math.random() * 5);
+  ctx.fillRect(-13, 13, 4, 2);
+  ctx.fillRect(9, 13, 4, 2);
   ctx.fillStyle = "#d9ecff";
   ctx.font = "9px monospace";
   ctx.textAlign = "center";
@@ -559,19 +662,43 @@ function drawShip() {
 function drawEnemy(enemy) {
   ctx.save();
   ctx.translate(enemy.x, enemy.y);
-  ctx.fillStyle = enemy.tough ? "#b9223d" : "#ff4055";
+  ctx.scale(enemy.size / 28, enemy.size / 28);
+  const mainColor = enemy.tough ? "#b9223d" : "#ff4055";
+  const edgeColor = enemy.tough ? "#ff9b58" : "#ff9aa7";
+  ctx.shadowColor = mainColor;
+  ctx.shadowBlur = enemy.tough ? 15 : 9;
+  ctx.fillStyle = mainColor;
   ctx.beginPath();
-  ctx.moveTo(0, enemy.size / 2);
-  ctx.lineTo(-enemy.size / 2, -enemy.size / 4);
-  ctx.lineTo(-enemy.size / 3, -enemy.size / 2);
-  ctx.lineTo(0, -enemy.size / 3);
-  ctx.lineTo(enemy.size / 3, -enemy.size / 2);
-  ctx.lineTo(enemy.size / 2, -enemy.size / 4);
+  ctx.moveTo(0, 15);
+  ctx.lineTo(-14, 2);
+  ctx.lineTo(-12, -7);
+  ctx.lineTo(-5, -4);
+  ctx.lineTo(0, -10);
+  ctx.lineTo(5, -4);
+  ctx.lineTo(12, -7);
+  ctx.lineTo(14, 2);
   ctx.closePath();
   ctx.fill();
-  ctx.fillStyle = "#510e20";
-  ctx.fillRect(-enemy.size / 4, -2, 4, 4);
-  ctx.fillRect(enemy.size / 4 - 4, -2, 4, 4);
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = edgeColor;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = enemy.tough ? "#681d2d" : "#8c2034";
+  ctx.beginPath();
+  ctx.moveTo(-8, 1);
+  ctx.lineTo(0, -5);
+  ctx.lineTo(8, 1);
+  ctx.lineTo(0, 9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#ffd3a0";
+  ctx.fillRect(-10, 1, 3, 2);
+  ctx.fillRect(7, 1, 3, 2);
+  ctx.fillStyle = "#ffb15c";
+  ctx.fillRect(-2, 10, 4, 3);
+  ctx.fillStyle = edgeColor;
+  ctx.fillRect(-8, -6, 3, 1);
+  ctx.fillRect(5, -6, 3, 1);
   ctx.restore();
 }
 
@@ -598,10 +725,15 @@ function draw() {
     ctx.fillRect(bullet.x - (bullet.width || 4) / 2, bullet.y - (bullet.height || 16) / 2, bullet.width || 4, bullet.height || 16);
   }
   for (const bullet of allyBullets) {
+    if (bullet.active) continue;
     ctx.fillStyle = "#75b8ff";
     ctx.shadowColor = "#4e9bff";
     ctx.shadowBlur = 8;
-    ctx.fillRect(bullet.x - 1.5, bullet.y - 7, 3, 14);
+    ctx.save();
+    ctx.translate(bullet.x, bullet.y);
+    ctx.rotate(Math.atan2(bullet.vy, bullet.vx) + Math.PI / 2);
+    ctx.fillRect(-1.5, -7, 3, 14);
+    ctx.restore();
   }
   for (const missile of missiles) {
     ctx.save();
@@ -640,20 +772,52 @@ function draw() {
 }
 
 function drawWingmate(ally) {
+  if (!ally.active) return;
   ctx.save();
   ctx.translate(ally.x, ally.y);
+  ctx.shadowColor = "#4e9bff";
+  ctx.shadowBlur = 10;
   ctx.fillStyle = "#4e9bff";
   ctx.beginPath();
-  ctx.moveTo(0, -12);
-  ctx.lineTo(10, 9);
-  ctx.lineTo(0, 5);
-  ctx.lineTo(-10, 9);
+  ctx.moveTo(0, -14);
+  ctx.lineTo(4, -4);
+  ctx.lineTo(12, 7);
+  ctx.lineTo(11, 10);
+  ctx.lineTo(3, 7);
+  ctx.lineTo(0, 11);
+  ctx.lineTo(-3, 7);
+  ctx.lineTo(-11, 10);
+  ctx.lineTo(-12, 7);
+  ctx.lineTo(-4, -4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#a8d6ff";
+  ctx.beginPath();
+  ctx.moveTo(-8, 5);
+  ctx.lineTo(-3, 0);
+  ctx.lineTo(-4, 6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(8, 5);
+  ctx.lineTo(3, 0);
+  ctx.lineTo(4, 6);
   ctx.closePath();
   ctx.fill();
   ctx.fillStyle = "#d9ecff";
-  ctx.fillRect(-2, -4, 4, 6);
+  ctx.beginPath();
+  ctx.moveTo(0, -10);
+  ctx.lineTo(3, 1);
+  ctx.lineTo(0, 5);
+  ctx.lineTo(-3, 1);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#ffb15c";
+  ctx.fillRect(-2, 9, 4, 5 + Math.sin(elapsed * 22 + ally.x) * 1.5);
   ctx.font = "8px monospace";
   ctx.textAlign = "center";
+  ctx.fillStyle = "#d9ecff";
   ctx.fillText(ally.callsign, 0, 19);
   ctx.restore();
 }
