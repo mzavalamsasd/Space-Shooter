@@ -8,8 +8,8 @@ const WIDTH = canvas.width;
 const HEIGHT = canvas.height;
 const keys = new Set();
 const ship = { x: WIDTH / 2, y: HEIGHT - 76, width: 38, height: 36, speed: 5.4, cooldown: 0, invulnerable: 0 };
-const allies = ["VEGA", "KITE", "COMET", "ECHO"].map((callsign, index) => {
-  const x = WIDTH / 2 + [-92, -46, 46, 92][index];
+const allies = ["VEGA", "KITE", "COMET"].map((callsign, index) => {
+  const x = WIDTH / 2 + [-68, 0, 68][index];
   return { callsign, x, y: HEIGHT - 52, targetX: x, targetY: HEIGHT - 52, roamTimer: index * 0.2, cooldown: 0.35 + index * 0.12, health: 2, active: true };
 });
 const stars = Array.from({ length: 110 }, () => ({ x: Math.random() * WIDTH, y: Math.random() * HEIGHT, size: Math.random() * 1.8 + 0.4, speed: Math.random() * 1.3 + 0.35 }));
@@ -23,7 +23,9 @@ const weaponCatalog = [
   { id: "laser", name: "Laser machine gun", type: "starter", cost: 0, detail: "Rapid, accurate laser fire" },
   { id: "missile", name: "Seeker missile", type: "starter", cost: 0, detail: "Homing hit with heavy damage" },
   { id: "spread", name: "Tri-burst laser", type: "spread", cost: 55, detail: "Three bolts cover a wide arc" },
-  { id: "plasma", name: "Plasma lance", type: "plasma", cost: 90, detail: "Slow, armor-piercing plasma shot" }
+  { id: "plasma", name: "Plasma lance", type: "plasma", cost: 90, detail: "Slow, armor-piercing plasma shot" },
+  { id: "burst", name: "Cyclone burst cannon", type: "burst", cost: 115, detail: "Five-shot fan for close formations" },
+  { id: "rail", name: "Rail driver", type: "rail", cost: 150, detail: "Heavy shot with high damage" }
 ];
 const threatLevels = { calm: 0.78, standard: 1, veteran: 1.28 };
 
@@ -193,7 +195,8 @@ function renderShop() {
     const equipped = currentWeapon === weapon.id;
     const label = equipped ? "Selected" : owned ? "Select" : `Unlock · ${weapon.cost}`;
     const disabled = equipped || (!owned && credits < weapon.cost);
-    return `<article class="weapon-card"><div class="weapon-icon weapon-icon-${weapon.id}" aria-hidden="true">${weapon.id === "missile" ? "↟" : weapon.id === "spread" ? "⋔" : weapon.id === "plasma" ? "╱" : "╎"}</div><div class="hull-details"><strong>${weapon.name}</strong><span>${owned ? weapon.detail : `${weapon.cost} flight credits · ${weapon.detail}`}</span></div><button class="hull-action" type="button" data-buy-weapon="${weapon.id}" ${disabled ? "disabled" : ""}>${label}</button></article>`;
+    const icon = weapon.id === "missile" ? "↟" : weapon.id === "spread" ? "⋔" : weapon.id === "plasma" ? "╱" : weapon.id === "burst" ? "✳" : weapon.id === "rail" ? "═" : "╎";
+    return `<article class="weapon-card"><div class="weapon-icon weapon-icon-${weapon.id}" aria-hidden="true">${icon}</div><div class="hull-details"><strong>${weapon.name}</strong><span>${owned ? weapon.detail : `${weapon.cost} flight credits · ${weapon.detail}`}</span></div><button class="hull-action" type="button" data-buy-weapon="${weapon.id}" ${disabled ? "disabled" : ""}>${label}</button></article>`;
   }).join("");
 }
 
@@ -295,9 +298,21 @@ function fire() {
     return;
   }
   if (currentWeapon === "spread") {
-    for (const vx of [-1.4, 0, 1.4]) bullets.push({ x: ship.x, y: ship.y - 19, vx, speed: 8.2, source: "ACE" });
+    for (const vx of [-1.4, 0, 1.4]) bullets.push({ x: ship.x, y: ship.y - 19, vx, speed: 8.2, kind: "spread", source: "ACE" });
     ship.cooldown = 0.24;
     playTone(520, 0.08, "square", 0.035);
+    return;
+  }
+  if (currentWeapon === "burst") {
+    for (const vx of [-2.4, -1.2, 0, 1.2, 2.4]) bullets.push({ x: ship.x, y: ship.y - 19, vx, speed: 7.4, kind: "burst", source: "ACE" });
+    ship.cooldown = 0.42;
+    playTone(460, 0.1, "square", 0.04);
+    return;
+  }
+  if (currentWeapon === "rail") {
+    bullets.push({ x: ship.x, y: ship.y - 22, speed: 12.5, damage: 3, width: 5, height: 34, kind: "rail", source: "ACE" });
+    ship.cooldown = 0.58;
+    playTone(220, 0.18, "sawtooth", 0.05);
     return;
   }
   if (currentWeapon === "plasma") {
@@ -306,7 +321,7 @@ function fire() {
     playTone(240, 0.12, "sawtooth", 0.04);
     return;
   }
-  bullets.push({ x: ship.x, y: ship.y - 19, speed: 8.8, source: "ACE" });
+  bullets.push({ x: ship.x, y: ship.y - 19, speed: 8.8, kind: "laser", source: "ACE" });
   ship.cooldown = 0.075;
   playTone(620, 0.045, "square", 0.025);
 }
@@ -318,7 +333,8 @@ function selectWeapon(weapon) {
 }
 
 function renderWeaponSelector() {
-  weaponSelector.innerHTML = weaponCatalog.filter((weapon) => ownedWeapons.has(weapon.id)).map((weapon, index) => `<button type="button" data-weapon="${weapon.id}" aria-pressed="${weapon.id === currentWeapon}"><kbd>${index + 1}</kbd> ${weapon.id === "missile" ? "SEEKER" : weapon.id === "spread" ? "TRI-BURST" : weapon.id === "plasma" ? "PLASMA" : "LASER MG"}</button>`).join("");
+  const labels = { laser: "LASER MG", missile: "SEEKER", spread: "TRI-BURST", plasma: "PLASMA", burst: "BURST", rail: "RAIL" };
+  weaponSelector.innerHTML = weaponCatalog.filter((weapon) => ownedWeapons.has(weapon.id)).map((weapon, index) => `<button type="button" data-weapon="${weapon.id}" data-hotkey="${index + 1}" aria-pressed="${weapon.id === currentWeapon}"><kbd>${index + 1}</kbd> ${labels[weapon.id]}</button>`).join("");
 }
 
 function addFeedEntry(sourceText, resultText, variant = "") {
@@ -366,8 +382,11 @@ function update(delta) {
 
   if (keys.has("arrowleft") || keys.has("a") || keys.has("touch-left")) ship.x -= ship.speed * delta * 60;
   if (keys.has("arrowright") || keys.has("d") || keys.has("touch-right")) ship.x += ship.speed * delta * 60;
+  if (keys.has("arrowup") || keys.has("w")) ship.y -= ship.speed * delta * 60;
+  if (keys.has("arrowdown") || keys.has("s")) ship.y += ship.speed * delta * 60;
   if (keys.has(" ") || keys.has("touch-fire")) fire();
   ship.x = Math.max(ship.width / 2 + 8, Math.min(WIDTH - ship.width / 2 - 8, ship.x));
+  ship.y = Math.max(30, Math.min(HEIGHT - 42, ship.y));
   ship.cooldown = Math.max(0, ship.cooldown - delta);
   ship.invulnerable = Math.max(0, ship.invulnerable - delta);
   for (const ally of allies) {
@@ -438,7 +457,6 @@ function update(delta) {
     if (enemy.shootTimer <= 0 && enemy.y > 10 && enemy.y < HEIGHT - 150) {
       const threat = threatLevels[difficultySetting.value] || 1;
       const targets = [ship, ...allies.filter((ally) => ally.active)];
-      if (transport) targets.push(transport);
       const target = targets[Math.floor(Math.random() * targets.length)];
       const speed = (3.2 + wave * 0.12) * threat;
       const distance = Math.hypot(target.x - enemy.x, target.y - enemy.y) || 1;
@@ -718,11 +736,48 @@ function draw() {
   ctx.lineTo(WIDTH, HEIGHT - 36);
   ctx.stroke();
   for (const bullet of bullets) {
-    const plasma = bullet.kind === "plasma";
-    ctx.fillStyle = plasma ? "#ffb15c" : "#8fffee";
-    ctx.shadowColor = plasma ? "#ff713d" : "#65e5d3";
-    ctx.shadowBlur = plasma ? 16 : 12;
-    ctx.fillRect(bullet.x - (bullet.width || 4) / 2, bullet.y - (bullet.height || 16) / 2, bullet.width || 4, bullet.height || 16);
+    ctx.save();
+    ctx.translate(bullet.x, bullet.y);
+    ctx.rotate(Math.atan2(-bullet.speed, bullet.vx || 0) + Math.PI / 2);
+    if (bullet.kind === "rail") {
+      ctx.shadowColor = "#75dcff";
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = "#65e5d3";
+      ctx.fillRect(-4, -17, 8, 34);
+      ctx.fillStyle = "#e7faff";
+      ctx.fillRect(-1, -17, 2, 34);
+    } else if (bullet.kind === "plasma") {
+      ctx.shadowColor = "#ff713d";
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = "#ff9b58";
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 5, 13, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#fff0c2";
+      ctx.fillRect(-1, -8, 2, 11);
+    } else if (bullet.kind === "burst") {
+      ctx.shadowColor = "#ffb15c";
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = "#ffd166";
+      ctx.beginPath();
+      ctx.moveTo(0, -8);
+      ctx.lineTo(3, -2);
+      ctx.lineTo(2, 6);
+      ctx.lineTo(0, 8);
+      ctx.lineTo(-2, 6);
+      ctx.lineTo(-3, -2);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      const spread = bullet.kind === "spread";
+      ctx.shadowColor = spread ? "#4e9bff" : "#65e5d3";
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = spread ? "#9bd0ff" : "#8fffee";
+      ctx.fillRect(spread ? -2 : -1.5, -7, spread ? 4 : 3, 14);
+      ctx.fillStyle = "#effffb";
+      ctx.fillRect(-0.5, -5, 1, 9);
+    }
+    ctx.restore();
   }
   for (const bullet of allyBullets) {
     if (bullet.active) continue;
@@ -739,9 +794,16 @@ function draw() {
     ctx.save();
     ctx.translate(missile.x, missile.y);
     ctx.rotate(Math.atan2(missile.vy, missile.vx) + Math.PI / 2);
-    ctx.fillStyle = "#ffb15c";
     ctx.shadowColor = "#ff713d";
-    ctx.shadowBlur = 10;
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = "#ff9b58";
+    ctx.beginPath();
+    ctx.moveTo(-3, 5);
+    ctx.lineTo(0, 13 + Math.sin(elapsed * 36 + missile.x) * 2);
+    ctx.lineTo(3, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#ffb15c";
     ctx.beginPath();
     ctx.moveTo(0, -9);
     ctx.lineTo(5, 5);
@@ -749,6 +811,8 @@ function draw() {
     ctx.lineTo(-5, 5);
     ctx.closePath();
     ctx.fill();
+    ctx.fillStyle = "#fff0c2";
+    ctx.fillRect(-1, -5, 2, 7);
     ctx.restore();
   }
   ctx.shadowBlur = 0;
@@ -886,6 +950,7 @@ function drawRadar() {
   }
   radarCtx.fillStyle = "#4e9bff";
   for (const ally of allies) {
+    if (!ally.active) continue;
     const x = padding + ally.x / WIDTH * plotWidth;
     const y = padding + ally.y / HEIGHT * plotHeight;
     radarCtx.fillRect(x - 1.5, y - 1.5, 3, 3);
@@ -912,11 +977,11 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   const key = event.key.toLowerCase();
-  if (key === "1") selectWeapon("laser");
-  if (key === "2") selectWeapon("missile");
-  if (key === "3") selectWeapon("spread");
-  if (key === "4") selectWeapon("plasma");
-  if (["arrowleft", "arrowright", " "].includes(key)) event.preventDefault();
+  if (/^[1-9]$/.test(key)) {
+    const button = weaponSelector.querySelector(`[data-hotkey="${key}"]`);
+    if (button) selectWeapon(button.dataset.weapon);
+  }
+  if (["arrowleft", "arrowright", "arrowup", "arrowdown", " "].includes(key)) event.preventDefault();
   keys.add(key);
 });
 document.addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));

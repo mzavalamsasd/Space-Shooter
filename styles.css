@@ -99,6 +99,8 @@ canvas { display: block; width: 100%; height: auto; aspect-ratio: 8 / 5; touch-a
 .weapon-card, .hull-card { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 8px; border: 1px solid var(--line); background: rgba(16, 29, 36, 0.88); }
 .weapon-icon { display: grid; place-items: center; width: 34px; aspect-ratio: 1; border: 1px solid rgba(101, 229, 211, 0.35); color: var(--mint); font-size: 19px; }
 .weapon-icon-missile, .weapon-icon-plasma { border-color: rgba(255, 155, 88, 0.45); color: var(--coral); }
+.weapon-icon-burst { border-color: rgba(255, 209, 102, 0.45); color: #ffd166; }
+.weapon-icon-rail { border-color: rgba(183, 232, 255, 0.45); color: #b7e8ff; }
 .hull-details { display: grid; gap: 4px; min-width: 0; }
 .hull-details strong { overflow: hidden; color: var(--paper); font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .hull-details > span { color: var(--muted); font-size: 8px; }
