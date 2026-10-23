@@ -284,7 +284,7 @@ function updateHud() {
   scoreDisplay.textContent = String(score).padStart(5, "0");
   livesDisplay.textContent = String(Math.max(0, lives));
   document.getElementById("life-mark").textContent =
-    "◆ ".repeat(Math.max(0, lives)).trim();
+    "â—† ".repeat(Math.max(0, lives)).trim();
   waveDisplay.textContent = String(wave).padStart(2, "0");
   highScoreDisplay.textContent = String(highScore).padStart(5, "0");
 }
@@ -321,26 +321,26 @@ function renderShop() {
   hullList.innerHTML = hulls.map((hull) => {
     const owned = ownedHulls.has(hull.id);
     const equipped = activeHull === hull.id;
-    const label = equipped ? "Equipped" : owned ? "Equip" : `Acquire · ${hull.cost}`;
+    const label = equipped ? "Equipped" : owned ? "Equip" : `Acquire Â· ${hull.cost}`;
     const disabled = equipped || (!owned && credits < hull.cost);
 
-    return `<article class="hull-card"><div class="hull-swatch" style="--hull-color:${hull.color};--hull-accent:${hull.accent}" aria-hidden="true"><span>✦</span></div><div class="hull-details"><strong>${hull.name}</strong><span>${owned ? "Squadron issue" : `${hull.cost} flight credits`}</span></div><button class="hull-action" type="button" data-hull="${hull.id}" ${disabled ? "disabled" : ""}>${label}</button></article>`;
+    return `<article class="hull-card"><div class="hull-swatch" style="--hull-color:${hull.color};--hull-accent:${hull.accent}" aria-hidden="true"><span>âœ¦</span></div><div class="hull-details"><strong>${hull.name}</strong><span>${owned ? "Squadron issue" : `${hull.cost} flight credits`}</span></div><button class="hull-action" type="button" data-hull="${hull.id}" ${disabled ? "disabled" : ""}>${label}</button></article>`;
   }).join("");
 
   weaponList.innerHTML = weaponCatalog.map((weapon) => {
     const owned = ownedWeapons.has(weapon.id);
     const equipped = currentWeapon === weapon.id;
-    const label = equipped ? "Selected" : owned ? "Select" : `Unlock · ${weapon.cost}`;
+    const label = equipped ? "Selected" : owned ? "Select" : `Unlock Â· ${weapon.cost}`;
     const disabled = equipped || (!owned && credits < weapon.cost);
 
     const icon =
-      weapon.id === "missile" ? "↟" :
-      weapon.id === "spread" ? "⋔" :
-      weapon.id === "plasma" ? "╱" :
-      weapon.id === "burst" ? "✳" :
-      weapon.id === "rail" ? "═" : "╎";
+      weapon.id === "missile" ? "â†Ÿ" :
+      weapon.id === "spread" ? "â‹”" :
+      weapon.id === "plasma" ? "â•±" :
+      weapon.id === "burst" ? "âœ³" :
+      weapon.id === "rail" ? "â•" : "â•Ž";
 
-    return `<article class="weapon-card"><div class="weapon-icon weapon-icon-${weapon.id}" aria-hidden="true">${icon}</div><div class="hull-details"><strong>${weapon.name}</strong><span>${owned ? weapon.detail : `${weapon.cost} flight credits · ${weapon.detail}`}</span></div><button class="hull-action" type="button" data-buy-weapon="${weapon.id}" ${disabled ? "disabled" : ""}>${label}</button></article>`;
+    return `<article class="weapon-card"><div class="weapon-icon weapon-icon-${weapon.id}" aria-hidden="true">${icon}</div><div class="hull-details"><strong>${weapon.name}</strong><span>${owned ? weapon.detail : `${weapon.cost} flight credits Â· ${weapon.detail}`}</span></div><button class="hull-action" type="button" data-buy-weapon="${weapon.id}" ${disabled ? "disabled" : ""}>${label}</button></article>`;
   }).join("");
 }
 
@@ -426,7 +426,7 @@ function updateEscortHud() {
 
 function resolveEscort(success) {
   transport = null;
-  escortLabel.textContent = success ? "TRANSPORT SAFE · +150" : "TRANSPORT LOST";
+  escortLabel.textContent = success ? "TRANSPORT SAFE Â· +150" : "TRANSPORT LOST";
   escortStatus.classList.toggle("escort-success", success);
   escortStatus.classList.toggle("escort-danger", !success);
   escortIntegrity.textContent = success ? "MISSION COMPLETE" : "MISSION FAILED";
